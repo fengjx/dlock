@@ -2,7 +2,20 @@ package dlock
 
 import (
 	"context"
+	"time"
+
+	"github.com/google/uuid"
 )
+
+const (
+	defaultTTL     = 1 * time.Minute
+	defaultTimeout = 10 * time.Second
+	defaultTries   = 3
+)
+
+var defaultGenValueFn = func() (string, error) {
+	return uuid.NewString(), nil
+}
 
 // LockClient 锁客户端
 type LockClient interface {
@@ -30,15 +43,41 @@ type Mutex interface {
 	UnlockCtx(ctx context.Context) (bool, error)
 }
 
-// Option mutex 设置接口
-type Option interface {
-	Apply(Mutex)
+// Options mutex options
+type Options struct {
+	ttl        time.Duration
+	timeout    time.Duration
+	genValueFn func() (string, error)
+	tries      int // 重试次数
 }
 
-// OptionFunc mutex 选项设置
-type OptionFunc func(Mutex)
+// Option mutex 选项设置
+type Option func(*Options)
 
-// Apply 调用 mutex 配置
-func (f OptionFunc) Apply(mutex Mutex) {
-	f(mutex)
+// WithTTL 设置锁过期时间
+func WithTTL(ttl time.Duration) Option {
+	return Option(func(o *Options) {
+		o.ttl = ttl
+	})
+}
+
+// WithTimeout 设置获取锁超时时间
+func WithTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
+		o.timeout = timeout
+	}
+}
+
+// WithTries 获取锁失败重试次数
+func WithTries(tries int) Option {
+	return func(o *Options) {
+		o.tries = tries
+	}
+}
+
+// WithGenValueFunc 自定义 value 生成
+func WithGenValueFunc(genValueFn func() (string, error)) Option {
+	return func(o *Options) {
+		o.genValueFn = genValueFn
+	}
 }
