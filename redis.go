@@ -16,17 +16,24 @@ var (
 
 // RedisLockClient 基于redis实现的分布式锁客户端
 type RedisLockClient struct {
-	cli redis.Cmdable
+	cli  redis.Cmdable
+	mtxs map[string]*RedisMutex
 }
 
 // NewRedisLock 创建redis锁客户端
-func NewRedisLock() LockClient {
-	c := &RedisLockClient{}
+func NewRedisLock(cli redis.Cmdable) LockClient {
+	c := &RedisLockClient{
+		cli:  cli,
+		mtxs: make(map[string]*RedisMutex),
+	}
 	return c
 }
 
 // NewMutex 创建redis锁
 func (r RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
+	if _, ok := r.mtxs[name]; ok {
+		panic("mutex name already exists")
+	}
 	opt := &Options{
 		ttl:        defaultTTL,
 		timeout:    defaultTimeout,
@@ -37,7 +44,7 @@ func (r RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
 		o(opt)
 	}
 	ctx := context.Background()
-	unlockSha, _ := r.cli.ScriptLoad(ctx, luaUnlock).Result()
+	unlockSha := r.cli.ScriptLoad(ctx, luaUnlock).Val()
 	m := &RedisMutex{
 		cli:        r.cli,
 		name:       name,
@@ -47,6 +54,7 @@ func (r RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
 		genValueFn: opt.genValueFn,
 		unlockSha:  unlockSha,
 	}
+	r.mtxs[name] = m
 	return m
 }
 
@@ -90,6 +98,7 @@ func (r RedisMutex) tryLockCtx(ctx context.Context) error {
 		}
 		r.val = val
 		lerr = nil
+		return nil
 	}
 	return lerr
 }
