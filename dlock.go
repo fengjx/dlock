@@ -13,7 +13,10 @@ const (
 	defaultTries   = 3
 )
 
-var defaultGenValueFn = func() (string, error) {
+// GenValueFn lock value 生成器
+type GenValueFn func() (string, error)
+
+var defaultGenValueFn GenValueFn = func() (string, error) {
 	return uuid.NewString(), nil
 }
 
@@ -47,7 +50,7 @@ type Mutex interface {
 type Options struct {
 	ttl        time.Duration
 	timeout    time.Duration
-	genValueFn func() (string, error)
+	genValueFn GenValueFn
 	tries      int // 重试次数
 }
 
@@ -76,7 +79,7 @@ func WithTries(tries int) Option {
 }
 
 // WithGenValueFunc 自定义 value 生成
-func WithGenValueFunc(genValueFn func() (string, error)) Option {
+func WithGenValueFunc(genValueFn GenValueFn) Option {
 	return func(o *Options) {
 		o.genValueFn = genValueFn
 	}
