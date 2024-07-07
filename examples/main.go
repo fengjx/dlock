@@ -1,16 +1,3 @@
-# dlock
-
-go 实现的分布式锁
-
-## 安装
-
-```bash
-gp get github.com/fengjx/dlock@latest
-```
-
-## 用法
-
-```go
 package main
 
 import (
@@ -38,7 +25,3 @@ func main() {
 	}
 	defer mutex.Unlock()
 }
-```
-
-更多用法可以参考 [go test](./redis_test.go)
-

@@ -30,8 +30,8 @@ func NewRedisLock(cli redis.Cmdable) LockClient {
 }
 
 // NewMutex 创建redis锁
-func (r RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
-	if _, ok := r.mtxs[name]; ok {
+func (c *RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
+	if _, ok := c.mtxs[name]; ok {
 		panic("mutex name already exists")
 	}
 	opt := &Options{
@@ -44,9 +44,9 @@ func (r RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
 		o(opt)
 	}
 	ctx := context.Background()
-	unlockSha := r.cli.ScriptLoad(ctx, luaUnlock).Val()
+	unlockSha := c.cli.ScriptLoad(ctx, luaUnlock).Val()
 	m := &RedisMutex{
-		cli:        r.cli,
+		cli:        c.cli,
 		name:       name,
 		ttl:        opt.ttl,
 		timeout:    opt.timeout,
@@ -54,7 +54,7 @@ func (r RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
 		genValueFn: opt.genValueFn,
 		unlockSha:  unlockSha,
 	}
-	r.mtxs[name] = m
+	c.mtxs[name] = m
 	return m
 }
 
@@ -70,25 +70,25 @@ type RedisMutex struct {
 	unlockSha  string                 // 删除锁脚本sha
 }
 
-func (r RedisMutex) TryLock() error {
-	return r.TryLockCtx(context.Background())
+func (m *RedisMutex) TryLock() error {
+	return m.TryLockCtx(context.Background())
 }
 
-func (r RedisMutex) TryLockCtx(ctx context.Context) error {
-	return r.tryLockCtx(ctx)
+func (m *RedisMutex) TryLockCtx(ctx context.Context) error {
+	return m.tryLockCtx(ctx)
 }
 
-func (r RedisMutex) tryLockCtx(ctx context.Context) error {
+func (m *RedisMutex) tryLockCtx(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	var lerr error
-	for i := 0; i < r.tries; i++ {
-		val, err := r.genValueFn()
+	for i := 0; i < m.tries; i++ {
+		val, err := m.genValueFn()
 		if err != nil {
 			return err
 		}
-		ok, err := r.cli.SetNX(ctx, r.name, val, r.ttl).Result()
+		ok, err := m.cli.SetNX(ctx, m.name, val, m.ttl).Result()
 		if err != nil {
 			lerr = err
 			continue
@@ -96,32 +96,32 @@ func (r RedisMutex) tryLockCtx(ctx context.Context) error {
 		if !ok {
 			return ErrFailed
 		}
-		r.val = val
+		m.val = val
 		lerr = nil
 		return nil
 	}
 	return lerr
 }
 
-func (r RedisMutex) Lock() error {
-	return r.LockCtx(context.Background())
+func (m *RedisMutex) Lock() error {
+	return m.LockCtx(context.Background())
 }
 
-func (r RedisMutex) LockCtx(ctx context.Context) error {
-	return r.lockCtx(ctx)
+func (m *RedisMutex) LockCtx(ctx context.Context) error {
+	return m.lockCtx(ctx)
 }
 
-func (r RedisMutex) lockCtx(ctx context.Context) error {
+func (m *RedisMutex) lockCtx(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	ctx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 	var lerr error
 	ch := make(chan error, 1)
 	go func() {
 		for {
-			err := r.tryLockCtx(ctx)
+			err := m.tryLockCtx(ctx)
 			if errors.Is(err, ErrFailed) {
 				time.Sleep(10 * time.Millisecond) // Sleep for a while before retrying
 				continue
@@ -146,20 +146,20 @@ func (r RedisMutex) lockCtx(ctx context.Context) error {
 // true: 删除成功
 // false: 删除失败，表示如果是锁的值已经变更，或者是锁不存在。
 // 错不存在的情况会返回 ErrLockNotExistOrExpired
-func (r RedisMutex) Unlock() (bool, error) {
-	return r.UnlockCtx(context.Background())
+func (m *RedisMutex) Unlock() (bool, error) {
+	return m.UnlockCtx(context.Background())
 }
 
 // UnlockCtx 释放锁
 // true: 删除成功
 // false: 删除失败，表示如果是锁的值已经变更，或者是锁不存在。
 // 错不存在的情况会返回 ErrLockNotExistOrExpired
-func (r RedisMutex) UnlockCtx(ctx context.Context) (bool, error) {
-	return r.release(ctx)
+func (m *RedisMutex) UnlockCtx(ctx context.Context) (bool, error) {
+	return m.release(ctx)
 }
 
-func (r RedisMutex) release(ctx context.Context) (bool, error) {
-	ret, err := r.cli.EvalSha(ctx, r.unlockSha, []string{r.name}, r.val).Int64()
+func (m *RedisMutex) release(ctx context.Context) (bool, error) {
+	ret, err := m.cli.EvalSha(ctx, m.unlockSha, []string{m.name}, m.val).Int64()
 	if err != nil {
 		return false, err
 	}

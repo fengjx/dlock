@@ -13,7 +13,6 @@ import (
 )
 
 func TestLock(t *testing.T) {
-	t.Parallel()
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	testCases := []struct {
