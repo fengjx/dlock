@@ -42,3 +42,7 @@ func main() {
 
 更多用法可以参考 [go test](./redis_test.go)
 
+## 参考资料
+
+- [distributed-locks](https://redis.io/docs/latest/develop/use/patterns/distributed-locks/)
+
