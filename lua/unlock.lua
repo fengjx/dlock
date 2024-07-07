@@ -1,6 +1,6 @@
 -- 1: 删除锁成功返回
 -- -1: 锁不存在或者已过期
--- 0: 锁存在，但是 value 不相等
+-- 0: 锁存在，但是 value 不相等，不允许删除
 local val = redis.call("GET", KEYS[1])
 if val == ARGV[1] then
     -- 已存在，则删除
