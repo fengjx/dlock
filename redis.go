@@ -29,16 +29,27 @@ func NewRedisLock(cli redis.Cmdable) LockClient {
 	return c
 }
 
+// RedisLock redis 锁信息
+type RedisLock struct {
+	mutex *RedisMutex
+	val   string
+}
+
+// Unlock 释放锁
+func (r RedisLock) Unlock(ctx context.Context) (bool, error) {
+	return r.mutex.release(ctx, r.val)
+}
+
 // NewMutex 创建redis锁
 func (c *RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
 	if _, ok := c.mtxs[name]; ok {
 		panic("mutex name already exists")
 	}
 	opt := &Options{
-		ttl:        defaultTTL,
-		timeout:    defaultTimeout,
-		tries:      defaultTries,
-		genValueFn: defaultGenValueFn,
+		ttl:         defaultTTL,
+		waitTimeout: defaultTimeout,
+		tries:       defaultTries,
+		genValueFn:  defaultGenValueFn,
 	}
 	for _, o := range opts {
 		o(opt)
@@ -46,13 +57,13 @@ func (c *RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
 	ctx := context.Background()
 	unlockSha := c.cli.ScriptLoad(ctx, luaUnlock).Val()
 	m := &RedisMutex{
-		cli:        c.cli,
-		name:       name,
-		ttl:        opt.ttl,
-		timeout:    opt.timeout,
-		tries:      opt.tries,
-		genValueFn: opt.genValueFn,
-		unlockSha:  unlockSha,
+		cli:         c.cli,
+		name:        name,
+		ttl:         opt.ttl,
+		waitTimeout: opt.waitTimeout,
+		tries:       opt.tries,
+		genValueFn:  opt.genValueFn,
+		unlockSha:   unlockSha,
 	}
 	c.mtxs[name] = m
 	return m
@@ -60,106 +71,70 @@ func (c *RedisLockClient) NewMutex(name string, opts ...Option) Mutex {
 
 // RedisMutex redis实现的分布式锁
 type RedisMutex struct {
-	cli        redis.Cmdable          // redis 客户端
-	name       string                 // 锁名称
-	ttl        time.Duration          // 持有锁时长
-	timeout    time.Duration          // 阻塞获得锁最长等待时长
-	genValueFn func() (string, error) // 生成锁 value
-	tries      int                    // 获取锁异常时，尝试次数
-	val        string                 // 当前锁 value
-	unlockSha  string                 // 删除锁脚本sha
+	cli         redis.Cmdable          // redis 客户端
+	name        string                 // 锁名称
+	ttl         time.Duration          // 持有锁时长
+	waitTimeout time.Duration          // 阻塞获得锁最长等待时长
+	genValueFn  func() (string, error) // 生成锁 value
+	tries       int                    // 获取锁异常时，尝试次数
+	unlockSha   string                 // 删除锁脚本sha
 }
 
-func (m *RedisMutex) TryLock() error {
-	return m.TryLockCtx(context.Background())
-}
-
-func (m *RedisMutex) TryLockCtx(ctx context.Context) error {
-	return m.tryLockCtx(ctx)
-}
-
-func (m *RedisMutex) tryLockCtx(ctx context.Context) error {
+// TryLock 尝试获取锁，获取不到不会阻塞
+func (m *RedisMutex) TryLock(ctx context.Context) (lock Lock, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var lerr error
 	for i := 0; i < m.tries; i++ {
-		val, err := m.genValueFn()
+		var val string
+		val, err = m.genValueFn()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		ok, err := m.cli.SetNX(ctx, m.name, val, m.ttl).Result()
+		var ok bool
+		ok, err = m.cli.SetNX(ctx, m.name, val, m.ttl).Result()
 		if err != nil {
-			lerr = err
 			continue
 		}
 		if !ok {
-			return ErrFailed
+			return nil, ErrFailed
 		}
-		m.val = val
-		lerr = nil
-		return nil
+		lock = &RedisLock{
+			mutex: m,
+			val:   val,
+		}
+		return lock, nil
 	}
-	return lerr
+	return
 }
 
-func (m *RedisMutex) Lock() error {
-	return m.LockCtx(context.Background())
-}
-
-func (m *RedisMutex) LockCtx(ctx context.Context) error {
-	return m.lockCtx(ctx)
-}
-
-func (m *RedisMutex) lockCtx(ctx context.Context) error {
+// Lock 获取锁，获取不到会阻塞，最多等待 waitTimeout 时长
+func (m *RedisMutex) Lock(ctx context.Context) (lock Lock, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, m.timeout)
-	defer cancel()
-	var lerr error
-	ch := make(chan error, 1)
-	go func() {
-		for {
-			err := m.tryLockCtx(ctx)
-			if errors.Is(err, ErrFailed) {
-				time.Sleep(10 * time.Millisecond) // Sleep for a while before retrying
-				continue
-			}
-			if err != nil {
-				ch <- err
-				break
-			}
-			ch <- nil
+	ticker := time.NewTicker(10 * time.Millisecond)
+	timer := time.NewTimer(m.waitTimeout)
+	for range ticker.C {
+		lock, err = m.TryLock(ctx)
+		if err == nil {
+			return lock, nil
 		}
-	}()
-	select {
-	case <-ctx.Done():
-		lerr = ErrTimeout
-	case err := <-ch:
-		lerr = err
+		if !errors.Is(err, ErrFailed) {
+			return nil, err
+		}
+		select {
+		case <-timer.C:
+			return nil, ErrTimeout
+		default:
+		}
 	}
-	return lerr
+	return
 }
 
-// Unlock 释放锁
-// true: 删除成功
-// false: 删除失败，表示如果是锁的值已经变更，或者是锁不存在。
-// 错不存在的情况会返回 ErrLockNotExistOrExpired
-func (m *RedisMutex) Unlock() (bool, error) {
-	return m.UnlockCtx(context.Background())
-}
-
-// UnlockCtx 释放锁
-// true: 删除成功
-// false: 删除失败，表示如果是锁的值已经变更，或者是锁不存在。
-// 错不存在的情况会返回 ErrLockNotExistOrExpired
-func (m *RedisMutex) UnlockCtx(ctx context.Context) (bool, error) {
-	return m.release(ctx)
-}
-
-func (m *RedisMutex) release(ctx context.Context) (bool, error) {
-	ret, err := m.cli.EvalSha(ctx, m.unlockSha, []string{m.name}, m.val).Int64()
+// 释放锁
+func (m *RedisMutex) release(ctx context.Context, val string) (bool, error) {
+	ret, err := m.cli.EvalSha(ctx, m.unlockSha, []string{m.name}, val).Int64()
 	if err != nil {
 		return false, err
 	}
