@@ -1,6 +1,7 @@
 package dlock
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -209,24 +210,27 @@ func TestLock(t *testing.T) {
 				opts = append(opts, WithTries(tc.tries))
 			}
 			if tc.timeout != 0 {
-				opts = append(opts, WithTimeout(tc.timeout))
+				opts = append(opts, WithWaitTimeout(tc.timeout))
 			}
 			if tc.genValueFn != nil {
 				opts = append(opts, WithGenValueFunc(tc.genValueFn))
 			}
+
+			ctx := context.Background()
 			mutex := lockClient.NewMutex(tc.name, opts...)
 			var err error
+			var lock Lock
 			if tc.tryLock {
-				err = mutex.TryLock()
+				lock, err = mutex.TryLock(ctx)
 			} else {
-				err = mutex.Lock()
+				lock, err = mutex.Lock(ctx)
 			}
 			if tc.wantLockErr != nil {
 				assert.Equal(t, tc.wantLockErr, err)
 				return
 			}
 			require.NoError(t, err)
-			ok, err := mutex.Unlock()
+			ok, err := lock.Unlock(ctx)
 			assert.Equal(t, tc.wantUnlockResult, ok)
 			if tc.wantUnlockErr != nil {
 				assert.Equal(t, tc.wantUnlockErr, err)

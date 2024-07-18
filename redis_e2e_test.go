@@ -3,6 +3,7 @@
 package dlock
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -24,14 +25,15 @@ func getRedisLockClient() LockClient {
 func TestE2ELock(t *testing.T) {
 	mutex := getRedisLockClient().NewMutex("e2e-lock",
 		WithTTL(10*time.Second),
-		WithTimeout(3*time.Second),
+		WithWaitTimeout(3*time.Second),
 		WithTries(3),
 	)
-	err := mutex.Lock()
+	ctx := context.Background()
+	lock, err := mutex.Lock(ctx)
 	assert.NoError(t, err)
-	err = mutex.Lock()
+	_, err = mutex.Lock(ctx)
 	assert.Equal(t, ErrTimeout, err)
-	ok, err := mutex.Unlock()
+	ok, err := lock.Unlock(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, true, ok)
 }
@@ -39,7 +41,7 @@ func TestE2ELock(t *testing.T) {
 func TestE2ESum(t *testing.T) {
 	mutex := getRedisLockClient().NewMutex("e2e-lock-sum",
 		WithTTL(10*time.Second),
-		WithTimeout(60*time.Second),
+		WithWaitTimeout(60*time.Second),
 		WithTries(3),
 	)
 	var sum int
@@ -48,12 +50,13 @@ func TestE2ESum(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			err := mutex.Lock()
+			ctx := context.Background()
+			lock, err := mutex.Lock(ctx)
 			if err != nil {
 				t.Fatal(idx, err)
 			}
 			defer func() {
-				ok, err := mutex.Unlock()
+				ok, err := lock.Unlock(ctx)
 				if !ok {
 					t.Fatal(idx, "unlock failed", ok)
 				}
@@ -72,14 +75,15 @@ func TestE2ESum(t *testing.T) {
 func TestE2ETryLock(t *testing.T) {
 	mutex := getRedisLockClient().NewMutex("e2e-try-lock",
 		WithTTL(10*time.Second),
-		WithTimeout(60*time.Second),
+		WithWaitTimeout(60*time.Second),
 		WithTries(3),
 	)
-	err := mutex.TryLock()
+	ctx := context.Background()
+	lock, err := mutex.TryLock(ctx)
 	assert.NoError(t, err)
-	err = mutex.TryLock()
+	_, err = mutex.TryLock(ctx)
 	assert.Equal(t, ErrFailed, err)
-	ok, err := mutex.Unlock()
+	ok, err := lock.Unlock(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, true, ok)
 }

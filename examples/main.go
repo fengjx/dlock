@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -16,12 +17,13 @@ func main() {
 	lockCli := dlock.NewRedisLock(client)
 	mutex := lockCli.NewMutex("examples",
 		dlock.WithTTL(10*time.Second),
-		dlock.WithTimeout(3*time.Second),
+		dlock.WithWaitTimeout(3*time.Second),
 		dlock.WithTries(3),
 	)
-	err := mutex.TryLock()
+	ctx := context.Background()
+	lock, err := mutex.TryLock(ctx)
 	if err != nil {
 		log.Panic(err)
 	}
-	defer mutex.Unlock()
+	defer lock.Unlock(ctx)
 }

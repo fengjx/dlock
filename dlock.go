@@ -26,32 +26,27 @@ type LockClient interface {
 	NewMutex(name string, opts ...Option) Mutex
 }
 
+// Lock 锁信息
+type Lock interface {
+	// Unlock 释放锁
+	Unlock(ctx context.Context) (bool, error)
+}
+
+// Mutex 锁
 type Mutex interface {
 	// Lock 获取锁，阻塞等待
-	Lock() error
-
-	// LockCtx 获取锁，阻塞等待
-	LockCtx(ctx context.Context) error
+	Lock(ctx context.Context) (Lock, error)
 
 	// TryLock 尝试获取锁
-	TryLock() error
-
-	// TryLockCtx 尝试获取锁
-	TryLockCtx(ctx context.Context) error
-
-	// Unlock 释放锁
-	Unlock() (bool, error)
-
-	// UnlockCtx 释放锁
-	UnlockCtx(ctx context.Context) (bool, error)
+	TryLock(ctx context.Context) (Lock, error)
 }
 
 // Options mutex options
 type Options struct {
-	ttl        time.Duration
-	timeout    time.Duration
-	genValueFn GenValueFn
-	tries      int // 重试次数
+	ttl         time.Duration
+	waitTimeout time.Duration
+	genValueFn  GenValueFn
+	tries       int // 重试次数
 }
 
 // Option mutex 选项设置
@@ -64,10 +59,10 @@ func WithTTL(ttl time.Duration) Option {
 	})
 }
 
-// WithTimeout 设置获取锁超时时间
-func WithTimeout(timeout time.Duration) Option {
+// WithWaitTimeout 设置获取锁等待时间
+func WithWaitTimeout(waitTimeout time.Duration) Option {
 	return func(o *Options) {
-		o.timeout = timeout
+		o.waitTimeout = waitTimeout
 	}
 }
 
